@@ -1,4 +1,22 @@
-import os, time, json, sqlite3, requests, subprocess, tempfile, shutil, re
+import os, time, json, sqlite3, subprocess, tempfile, shutil, re, sys, importlib
+
+
+def ensure_deps():
+    pkgs = ["requests", "yt_dlp"]
+    missing = [p for p in pkgs if importlib.util.find_spec(p) is None]
+    if missing:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", *missing])
+    if shutil.which("ffmpeg") is None:
+        try:
+            subprocess.check_call(["apt-get", "update"])
+            subprocess.check_call(["apt-get", "install", "-y", "--no-install-recommends", "ffmpeg"])
+        except Exception:
+            pass
+
+
+ensure_deps()
+
+import requests
 from yt_dlp import YoutubeDL
 
 # ===== ENV =====
@@ -57,6 +75,10 @@ if "media_type" not in cols:
     db.execute("ALTER TABLE biz_messages ADD COLUMN media_type TEXT")
 if "file_id" not in cols:
     db.execute("ALTER TABLE biz_messages ADD COLUMN file_id TEXT")
+db.commit()
+
+db.execute("CREATE INDEX IF NOT EXISTS idx_biz_chat_msg ON biz_messages(chat_id, msg_id)")
+db.execute("CREATE INDEX IF NOT EXISTS idx_biz_media_type ON biz_messages(media_type)")
 db.commit()
 
 # ===== debug/log helpers =====
@@ -613,24 +635,14 @@ def handle_deleted_business_messages(u):
         )
 
         if mtype and fid:
-            # Для кружков - особая обработка (голосовое с текстом + беззвучный кружок)
             if mtype == "video_note":
                 try:
-                    # Скачиваем кружок и создаем из него голосовое сообщение
-                    url, fname = get_file_path(fid)
-                    src = download_file(url, fname)
-                    voice_file = extract_voice_ogg(src)
-                    
-                    # Отправляем информацию как голосовое сообщение со звуком
-                    tg_upload("sendVoice", "voice", voice_file, chat_id=get_owner_id() or LOG_CHAT, caption=caption, parse_mode="HTML")
-                    
-                    # Отправляем кружок без звука
+                    tg_call("sendMessage", chat_id=get_owner_id() or LOG_CHAT, text=caption, parse_mode="HTML", disable_web_page_preview=True)
                     tg_call("sendVideoNote", chat_id=get_owner_id() or LOG_CHAT, video_note=fid, length=640)
                 except Exception as e:
                     d("[video_note error]", str(e))
                     send_log_html(caption + "\n\n<i>(не удалось отправить кружок)</i>")
             else:
-                # прочие типы — как раньше (caption в одном сообщении с медиа)
                 send_media_to_log(mtype, fid, caption)
         elif text:
             # Текстовое сообщение без медиа - отправляем только текст

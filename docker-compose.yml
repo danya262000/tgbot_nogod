@@ -1,0 +1,9 @@
+version: '3.8'
+services:
+  bot:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./media_cache:/app/media_cache
+    restart: unless-stopped
